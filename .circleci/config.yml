@@ -12,52 +12,111 @@ commands:
   approve-job-in-triggering-pipeline:
     steps:
       - run:
-          name: Ping CircleCI API to get workflow
+          name: Debug API key and approve
           command: |
-            echo << pipeline.parameters.triggering-pipeline-id >>
+            echo "=== DEBUGGING API KEY ISSUE ==="
             echo "Triggering pipeline ID: << pipeline.parameters.triggering-pipeline-id >>"
-            echo "API Key present: Yes"
+            
+            # Show API key details
+            if [ -n "$CIRCLECI_API_KEY" ]; then
+              echo "CIRCLECI_API_KEY exists"
+              echo "First 30 chars: ${CIRCLECI_API_KEY:0:30}..."
+              echo "Length: ${#CIRCLECI_API_KEY} characters"
+              # Check if it matches our expected key pattern
+              if [[ "$CIRCLECI_API_KEY" == CCIPAT_* ]]; then
+                echo "Key format: Personal Access Token (CCIPAT)"
+              else
+                echo "Key format: Unknown or different format"
+              fi
+            else
+              echo "ERROR: CIRCLECI_API_KEY not found!"
+              echo "Available environment variables with 'CIRCLE':"
+              env | grep CIRCLE | cut -d= -f1
+            fi
+            
             if ! [ -z "<< pipeline.parameters.triggering-pipeline-id >>" ] 
             then
-              workflow_id=$(curl --request GET \
+              # Get workflow with error checking
+              echo ""
+              echo "=== TESTING API READ PERMISSIONS ==="
+              workflow_response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" --request GET \
                 --url https://circleci.com/api/v2/pipeline/<< pipeline.parameters.triggering-pipeline-id >>/workflow \
                 --header "Circle-Token: $CIRCLECI_API_KEY" \
-                --header "content-type: application/json" \
-              | jq -r '.items[0].id')
-
-              echo $workflow_id
+                --header "content-type: application/json")
               
-              waiting_job_id=$(curl --request GET \
+              http_status=$(echo "$workflow_response" | grep "HTTP_STATUS" | cut -d: -f2)
+              body=$(echo "$workflow_response" | sed '/HTTP_STATUS/d')
+              
+              echo "GET workflow HTTP status: $http_status"
+              
+              if [ "$http_status" != "200" ]; then
+                echo "ERROR: Failed to get workflow. Response:"
+                echo "$body"
+                exit 1
+              fi
+              
+              workflow_id=$(echo "$body" | jq -r '.items[0].id')
+              echo "Workflow ID: $workflow_id"
+              
+              # Get jobs
+              echo ""
+              echo "=== GETTING APPROVAL JOB ==="
+              job_response=$(curl -s --request GET \
                 --url https://circleci.com/api/v2/workflow/$workflow_id/job \
                 --header "Circle-Token: $CIRCLECI_API_KEY" \
-                --header "content-type: application/json" \
-              | jq -r '.items[] | select(.name == "wait-for-triggered-pipeline").id')
-
-              echo $waiting_job_id
-
-              curl --request POST \
+                --header "content-type: application/json")
+              
+              waiting_job_id=$(echo "$job_response" | jq -r '.items[] | select(.name == "wait-for-triggered-pipeline").id')
+              echo "Approval job ID: $waiting_job_id"
+              
+              # Try approval with detailed error info
+              echo ""
+              echo "=== ATTEMPTING APPROVAL ==="
+              echo "URL: https://circleci.com/api/v2/workflow/$workflow_id/approve/$waiting_job_id"
+              echo "Using API key starting with: ${CIRCLECI_API_KEY:0:20}..."
+              
+              approval_response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" --request POST \
                 --url https://circleci.com/api/v2/workflow/$workflow_id/approve/$waiting_job_id \
                 --header "Circle-Token: $CIRCLECI_API_KEY" \
-                --header "content-type: application/json"
-
+                --header "content-type: application/json")
+              
+              http_status=$(echo "$approval_response" | grep "HTTP_STATUS" | cut -d: -f2)
+              body=$(echo "$approval_response" | sed '/HTTP_STATUS/d')
+              
+              echo "Approval HTTP status: $http_status"
+              echo "Approval response: $body"
+              
+              if [ "$http_status" == "201" ] || [ "$http_status" == "200" ]; then
+                echo "SUCCESS: Job approved!"
+              else
+                echo "FAILED: Could not approve job"
+                echo ""
+                echo "=== DIAGNOSIS ==="
+                echo "The API key can READ data (GET requests work) but cannot APPROVE (POST fails)."
+                echo "This suggests the API key in the context has limited permissions."
+                echo "Possible causes:"
+                echo "1. The API key in the context is read-only"
+                echo "2. The API key in the context is different from the one we tested with"
+                echo "3. Cross-project approvals require special permissions"
+              fi
             fi
           when: always
-          
 
 jobs:
   build-and-test:
     parameters:
       node-version:
         type: string
-        default: "15.10.0"
+        default: "20.10"
     docker:
       - image: cimg/node:<< parameters.node-version >>
+    parallelism: 4
     steps:
       - checkout
       - node/install-packages
       - run:
           command: |
-           npm run test-ci
+            npm run test-ci
       
 workflows:
   node-test-and-deploy:
@@ -70,8 +129,3 @@ workflows:
             - approve-job-in-triggering-pipeline
           context: 
             - circleci-api
-          
-
-  
-
-
