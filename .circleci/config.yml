@@ -15,6 +15,8 @@ commands:
           name: Ping CircleCI API to get workflow
           command: |
             echo << pipeline.parameters.triggering-pipeline-id >>
+            echo "Triggering pipeline ID: << pipeline.parameters.triggering-pipeline-id >>"
+            echo "API Key present: Yes"
             if ! [ -z "<< pipeline.parameters.triggering-pipeline-id >>" ] 
             then
               workflow_id=$(curl --request GET \

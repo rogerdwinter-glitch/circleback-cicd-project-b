@@ -1,0 +1,70 @@
+version: 2.1
+
+parameters:
+  triggering-pipeline-id:
+    type: string
+    default: ""
+  # These parameters come from webhook payload
+  webhook-payload:
+    type: string
+    default: "{}"
+
+orbs:
+  node: circleci/node@4.7.0
+
+commands:
+  callback-to-triggering-pipeline:
+    steps:
+      - run:
+          name: Callback to triggering pipeline
+          command: |
+            # Extract values from webhook payload
+            echo "Webhook payload: << pipeline.trigger_parameters.webhook.body >>"
+            
+            TRIGGERING_ID=
+            CALLBACK_URL=
+            CALLBACK_SECRET=
+            
+            if [ -n "" ] && [ -n "" ]; then
+              echo "Sending callback to Project A..."
+              
+              # Prepare callback payload
+              CALLBACK_PAYLOAD='{
+                "status": "success",
+                "triggering_pipeline_id": "''",
+                "project_b_pipeline_id": "<< pipeline.id >>",
+                "message": "Project B completed successfully"
+              }'
+              
+              # Send callback webhook
+              curl -X POST                 -H "Content-Type: application/json"                 -d ""                 "?secret="
+              
+              echo "Callback sent successfully"
+            else
+              echo "No callback information found in webhook payload"
+            fi
+          when: always
+
+jobs:
+  build-and-test:
+    parameters:
+      node-version:
+        type: string
+        default: "15.11"
+    docker:
+      - image: cimg/node:<< parameters.node-version >>
+    steps:
+      - checkout
+      - node/install-packages
+      - run:
+          command: |
+           npm run test-ci
+      - callback-to-triggering-pipeline
+      
+workflows:
+  node-test-and-deploy:
+    jobs:
+      - build-and-test:
+          matrix:
+            parameters:
+              node-version: ["15.11"]
