@@ -63,7 +63,7 @@ workflows:
       - build-and-test:
           matrix:
             parameters:
-              node-version: ["15.11"]
+              node-version: ["20.10"]
           post-steps:
             - approve-job-in-triggering-pipeline
           context: 
